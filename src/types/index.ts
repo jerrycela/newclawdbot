@@ -1,14 +1,20 @@
 // Core type definitions for Clawdbot
 
 // ===== Claude Code Events =====
+export type ClaudeEventType = 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'result' | 'error';
+
 export interface ClaudeEvent {
-  type: 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'error';
+  type: ClaudeEventType;
   timestamp: number;
   sessionId?: string;
   message?: AssistantMessage;
   tool_use?: ToolUse;
   tool_result?: ToolResult;
   error?: ErrorEvent;
+  // Result event fields
+  result?: string;
+  costUsd?: number;
+  durationMs?: number;
 }
 
 export interface AssistantMessage {
@@ -31,6 +37,24 @@ export interface ToolResult {
 export interface ErrorEvent {
   message: string;
   code?: string;
+}
+
+// System init event from Claude CLI
+export interface ClaudeSystemInit {
+  sessionId: string;
+  model: string;
+  tools: string[];
+  mcpServers?: Array<{ name: string; status: string }>;
+}
+
+// Request result with cost tracking
+export interface ClaudeRequestResult {
+  response: string;
+  sessionId: string;
+  costUsd: number;
+  durationMs: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 // ===== Telegram Context =====

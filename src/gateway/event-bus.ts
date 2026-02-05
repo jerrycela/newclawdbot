@@ -40,6 +40,22 @@ class EventBus extends EventEmitter {
   }
 
   /**
+   * Emit a cost tracking event
+   */
+  emitCostEvent(costUsd: number, sessionId?: string) {
+    const dashboardEvent: DashboardEvent = {
+      timestamp: Date.now(),
+      type: 'SYSTEM',
+      summary: `[COST] $${costUsd.toFixed(4)}`,
+      sessionId,
+    };
+    this.addToHistory(dashboardEvent);
+    this.emit('dashboard:event', dashboardEvent);
+    this.emit('cost:update', { costUsd, sessionId });
+    logger.debug({ costUsd, sessionId }, 'Cost event emitted');
+  }
+
+  /**
    * Get recent event history for new dashboard connections
    */
   getRecentEvents(limit = 50): DashboardEvent[] {

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { createInterface } from 'readline';
-import type { ClaudeEvent, QueuedRequest, TelegramContext } from '../types';
+import type { ClaudeEvent, ClaudeRequestResult, QueuedRequest, TelegramContext } from '../types';
 import { config } from '../utils/config';
 import { createChildLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../utils/errors';
@@ -9,11 +9,36 @@ import { eventBus } from './event-bus';
 
 const logger = createChildLogger('claude-bridge');
 
+// Stream event types from Claude CLI (--output-format stream-json --verbose)
 interface ClaudeStreamEvent {
-  type: 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'error';
-  message?: { content: Array<{ type: string; text?: string }> };
+  type: 'assistant' | 'tool_use' | 'tool_result' | 'system' | 'result' | 'error';
+  subtype?: string;
+  // System event fields
+  session_id?: string;
+  model?: string;
+  tools?: string[];
+  mcp_servers?: Array<{ name: string; status: string }>;
+  // Assistant event fields
+  message?: {
+    content: Array<{ type: string; text?: string }>;
+    model?: string;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+    };
+  };
+  // Tool events
   tool_use?: { name: string; input: unknown; id: string };
   tool_result?: { tool_use_id: string; content: string };
+  // Result event fields (final summary)
+  result?: string;
+  total_cost_usd?: number;
+  duration_ms?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+  // Error fields
   error?: { message: string };
 }
 
@@ -23,9 +48,39 @@ export class ClaudeBridge extends EventEmitter {
   private requestQueue: QueuedRequest[] = [];
   private isProcessing = false;
 
+  // Cost tracking
+  private todayCostUsd = 0;
+  private costResetDate = new Date().toDateString();
+
   constructor() {
     super();
     logger.info('Claude Bridge initialized');
+  }
+
+  /**
+   * Get today's total cost
+   */
+  getTodayCost(): number {
+    // Reset if day changed
+    const today = new Date().toDateString();
+    if (today !== this.costResetDate) {
+      this.todayCostUsd = 0;
+      this.costResetDate = today;
+    }
+    return this.todayCostUsd;
+  }
+
+  /**
+   * Add cost to today's total
+   */
+  private addCost(costUsd: number) {
+    const today = new Date().toDateString();
+    if (today !== this.costResetDate) {
+      this.todayCostUsd = 0;
+      this.costResetDate = today;
+    }
+    this.todayCostUsd += costUsd;
+    logger.debug({ costUsd, todayTotal: this.todayCostUsd }, 'Cost tracked');
   }
 
   /**
@@ -61,11 +116,17 @@ export class ClaudeBridge extends EventEmitter {
   /**
    * Get current status
    */
-  getStatus(): { status: 'ready' | 'busy' | 'error'; queueLength: number; activeSession?: string } {
+  getStatus(): {
+    status: 'ready' | 'busy' | 'error';
+    queueLength: number;
+    activeSession?: string;
+    todayCostUsd: number;
+  } {
     return {
       status: this.isProcessing ? 'busy' : 'ready',
       queueLength: this.requestQueue.length,
       activeSession: this.activeSessionId || undefined,
+      todayCostUsd: this.getTodayCost(),
     };
   }
 
@@ -148,8 +209,11 @@ export class ClaudeBridge extends EventEmitter {
 
       this.activeProcess = proc;
 
-      let fullResponse = '';
+      let finalResult: string | null = null;
+      let resultCostUsd = 0;
+      let resultDurationMs = 0;
       let errorOutput = '';
+      let actualSessionId = request.sessionId;
 
       // Parse stdout as newline-delimited JSON
       const rl = createInterface({ input: proc.stdout });
@@ -159,16 +223,52 @@ export class ClaudeBridge extends EventEmitter {
 
         try {
           const event = JSON.parse(line) as ClaudeStreamEvent;
-          this.handleStreamEvent(event, request.sessionId);
 
-          // Extract text content from assistant messages
-          if (event.type === 'assistant' && event.message?.content) {
-            for (const block of event.message.content) {
-              if (block.type === 'text' && block.text) {
-                fullResponse += block.text;
-              }
+          // Handle system init event - extract actual session ID
+          if (event.type === 'system' && event.subtype === 'init') {
+            if (event.session_id) {
+              actualSessionId = event.session_id;
+              logger.debug(
+                { sessionId: actualSessionId, model: event.model, tools: event.tools?.length },
+                'Claude session initialized'
+              );
             }
+            // Emit system init event
+            this.emit('system_init', {
+              sessionId: actualSessionId,
+              model: event.model,
+              tools: event.tools,
+              mcpServers: event.mcp_servers,
+            });
           }
+
+          // Handle result event - this contains the final response
+          if (event.type === 'result') {
+            finalResult = event.result || '';
+            resultCostUsd = event.total_cost_usd || 0;
+            resultDurationMs = event.duration_ms || 0;
+
+            // Track cost
+            if (resultCostUsd > 0) {
+              this.addCost(resultCostUsd);
+            }
+
+            logger.info(
+              {
+                sessionId: actualSessionId,
+                costUsd: resultCostUsd,
+                durationMs: resultDurationMs,
+                responseLength: finalResult.length,
+              },
+              'Claude result received'
+            );
+
+            // Emit cost event for dashboard
+            eventBus.emitCostEvent(resultCostUsd, actualSessionId);
+          }
+
+          // Emit stream event for dashboard and listeners
+          this.handleStreamEvent(event, actualSessionId);
         } catch (e) {
           // Non-JSON line - might be progress indicator, ignore
           logger.trace({ line }, 'Non-JSON stdout line');
@@ -186,11 +286,18 @@ export class ClaudeBridge extends EventEmitter {
         this.activeProcess = null;
 
         if (code === 0) {
+          // Use finalResult from result event, or fallback
+          const response = finalResult ?? 'No response generated.';
           logger.info(
-            { sessionId: request.sessionId, responseLength: fullResponse.length },
+            {
+              sessionId: actualSessionId,
+              responseLength: response.length,
+              costUsd: resultCostUsd,
+              durationMs: resultDurationMs,
+            },
             'Claude request completed'
           );
-          resolve(fullResponse || 'No response generated.');
+          resolve(response);
         } else {
           const error = new AppError(
             `Claude Code exited with code ${code}: ${errorOutput}`,
@@ -250,6 +357,10 @@ export class ClaudeBridge extends EventEmitter {
         : undefined,
       tool_result: event.tool_result,
       error: event.error,
+      // Include result fields
+      result: event.result,
+      costUsd: event.total_cost_usd,
+      durationMs: event.duration_ms,
     };
 
     // Emit to event bus for dashboard
@@ -263,6 +374,15 @@ export class ClaudeBridge extends EventEmitter {
         sessionId,
         tool: event.tool_use.name,
         input: event.tool_use.input,
+      });
+    }
+
+    if (event.type === 'result') {
+      this.emit('result', {
+        sessionId,
+        result: event.result,
+        costUsd: event.total_cost_usd,
+        durationMs: event.duration_ms,
       });
     }
   }

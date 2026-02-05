@@ -5,13 +5,14 @@ import { clsx } from "clsx";
 
 interface MemoryStatsProps {
   stats: {
-    fact: number;
-    goal: number;
-    todo: number;
-    conversation: number;
-    preference: number;
-    insight: number;
     total: number;
+    fact?: number;
+    goal?: number;
+    todo?: number;
+    conversation?: number;
+    preference?: number;
+    insight?: number;
+    [key: string]: number | undefined;
   };
 }
 
@@ -47,7 +48,7 @@ export function MemoryStats({ stats }: MemoryStatsProps) {
       <div className="p-4 grid grid-cols-2 gap-3">
         {categories.map(([key, config]) => {
           const Icon = config.icon;
-          const count = stats[key];
+          const count = stats[key] ?? 0;
           const percentage = stats.total > 0 ? (count / stats.total) * 100 : 0;
 
           return (

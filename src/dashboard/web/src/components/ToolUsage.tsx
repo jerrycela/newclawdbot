@@ -7,15 +7,17 @@ interface ToolUsageProps {
   tools: Array<{
     name: string;
     count: number;
-    category: "read" | "write" | "search" | "mcp";
+    category: "read" | "write" | "search" | "tool" | "mcp" | "system";
   }>;
 }
 
-const categoryColors = {
+const categoryColors: Record<string, string> = {
   read: "bg-blue-500",
   write: "bg-green-500",
   search: "bg-yellow-500",
+  tool: "bg-purple-500",
   mcp: "bg-pink-500",
+  system: "bg-gray-500",
 };
 
 export function ToolUsage({ tools }: ToolUsageProps) {

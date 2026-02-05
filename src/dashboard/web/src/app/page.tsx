@@ -7,51 +7,14 @@ import { ActiveGoals } from "@/components/ActiveGoals";
 import { MemoryStats } from "@/components/MemoryStats";
 import { ToolUsage } from "@/components/ToolUsage";
 import { useWebSocket, type ClaudeEvent, type HealthStatus } from "@/hooks/useWebSocket";
+import { useGoals } from "@/hooks/useGoals";
+import { useStats } from "@/hooks/useStats";
 import { Bot } from "lucide-react";
 
-// Mock data for demonstration
-const mockGoals = [
-  {
-    id: "1",
-    title: "Complete MVP implementation",
-    description: "Finish the core functionality of Clawdbot",
-    status: "active" as const,
-    priority: 9,
-    deadline: "2025-02-15",
-  },
-  {
-    id: "2",
-    title: "Write documentation",
-    status: "active" as const,
-    priority: 6,
-  },
-  {
-    id: "3",
-    title: "Set up CI/CD pipeline",
-    status: "paused" as const,
-    priority: 5,
-  },
-];
-
-const mockMemoryStats = {
-  fact: 45,
-  goal: 12,
-  todo: 8,
-  conversation: 156,
-  preference: 23,
-  insight: 17,
-  total: 261,
-};
-
-const mockToolUsage = [
-  { name: "Read", count: 234, category: "read" as const },
-  { name: "Edit", count: 89, category: "write" as const },
-  { name: "Grep", count: 67, category: "search" as const },
-  { name: "Glob", count: 45, category: "search" as const },
-  { name: "Bash", count: 34, category: "write" as const },
-  { name: "Write", count: 28, category: "write" as const },
-  { name: "WebFetch", count: 12, category: "mcp" as const },
-];
+// API configuration from environment variables
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8081";
 
 export default function Dashboard() {
   const [events, setEvents] = useState<ClaudeEvent[]>([]);
@@ -62,9 +25,12 @@ export default function Dashboard() {
     uptime: 0,
     todayCost: 0,
   });
-  const [goals] = useState(mockGoals);
   const [startTime] = useState(Date.now());
   const [currentUptime, setCurrentUptime] = useState(0);
+
+  // Use real API hooks
+  const { goals, toggleStatus } = useGoals({ apiUrl: API_URL, apiKey: API_KEY });
+  const { stats } = useStats({ apiUrl: API_URL, apiKey: API_KEY, refreshInterval: 30000 });
 
   // Update uptime every second
   useEffect(() => {
@@ -84,9 +50,9 @@ export default function Dashboard() {
 
   // Determine WebSocket URL based on environment
   const wsUrl =
-    typeof window !== "undefined"
+    typeof window !== "undefined" && WS_URL.startsWith("ws://localhost")
       ? `ws://${window.location.hostname}:8081`
-      : "ws://localhost:8081";
+      : WS_URL;
 
   const { isConnected } = useWebSocket({
     url: wsUrl,
@@ -177,9 +143,12 @@ export default function Dashboard() {
 
           {/* Right Column: Panels */}
           <div className="space-y-6">
-            <ActiveGoals goals={goals} />
-            <MemoryStats stats={mockMemoryStats} />
-            <ToolUsage tools={mockToolUsage} />
+            <ActiveGoals goals={goals} onToggleStatus={toggleStatus} />
+            <MemoryStats stats={stats?.memory ? {
+              ...stats.memory.byType,
+              total: stats.memory.total,
+            } : { total: 0 }} />
+            <ToolUsage tools={stats?.topTools || []} />
           </div>
         </div>
       </main>

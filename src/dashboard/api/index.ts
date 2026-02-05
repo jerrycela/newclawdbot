@@ -7,6 +7,7 @@ import { AppError, ErrorCode } from '../../utils/errors';
 import { dashboardAuth } from './middleware/auth';
 import healthRoutes from './routes/health';
 import goalsRoutes from './routes/goals';
+import statsRoutes from './routes/stats';
 
 const logger = createChildLogger('api-server');
 
@@ -71,16 +72,7 @@ protectedRoutes.use('*', dashboardAuth);
 protectedRoutes.route('/goals', goalsRoutes);
 
 // Stats endpoint
-protectedRoutes.get('/stats', async (c) => {
-  // TODO: Return actual stats from database
-  return c.json({
-    memoryCount: 0,
-    goalsCount: 0,
-    todayMessages: 0,
-    todayToolCalls: 0,
-    topTools: [],
-  });
-});
+protectedRoutes.route('/stats', statsRoutes);
 
 // Mount protected routes
 app.route('/api', protectedRoutes);

@@ -47,16 +47,6 @@ export interface ClaudeSystemInit {
   mcpServers?: Array<{ name: string; status: string }>;
 }
 
-// Request result with cost tracking
-export interface ClaudeRequestResult {
-  response: string;
-  sessionId: string;
-  costUsd: number;
-  durationMs: number;
-  inputTokens?: number;
-  outputTokens?: number;
-}
-
 // ===== Telegram Context =====
 export interface TelegramContext {
   chatId: number;

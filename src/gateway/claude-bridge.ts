@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { createInterface } from 'readline';
-import type { ClaudeEvent, ClaudeRequestResult, QueuedRequest, TelegramContext } from '../types';
+import type { ClaudeEvent, QueuedRequest, TelegramContext } from '../types';
 import { config } from '../utils/config';
 import { createChildLogger } from '../utils/logger';
 import { AppError, ErrorCode } from '../utils/errors';
@@ -93,7 +93,7 @@ export class ClaudeBridge extends EventEmitter {
     priority: 'high' | 'normal' | 'low' = 'normal'
   ): Promise<string> {
     return new Promise((resolve, reject) => {
-      this.requestQueue.push({
+      const newRequest: QueuedRequest = {
         message,
         sessionId,
         context,
@@ -101,16 +101,38 @@ export class ClaudeBridge extends EventEmitter {
         resolve,
         reject,
         timestamp: Date.now(),
-      });
+      };
 
-      // Sort queue by priority
-      this.requestQueue.sort((a, b) => {
-        const priorityOrder = { high: 0, normal: 1, low: 2 };
-        return priorityOrder[a.priority] - priorityOrder[b.priority];
-      });
+      // Binary insertion for O(log n) instead of O(n log n) sort
+      this.insertByPriority(newRequest);
 
       this.processQueue();
     });
+  }
+
+  /**
+   * Insert request into queue maintaining priority order (binary insertion)
+   */
+  private insertByPriority(request: QueuedRequest) {
+    const priorityOrder = { high: 0, normal: 1, low: 2 };
+    const requestPriority = priorityOrder[request.priority];
+
+    // Binary search for insertion point
+    let low = 0;
+    let high = this.requestQueue.length;
+
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      const midPriority = priorityOrder[this.requestQueue[mid]!.priority];
+
+      if (midPriority <= requestPriority) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+
+    this.requestQueue.splice(low, 0, request);
   }
 
   /**
@@ -214,6 +236,8 @@ export class ClaudeBridge extends EventEmitter {
       let resultDurationMs = 0;
       let errorOutput = '';
       let actualSessionId = request.sessionId;
+      let isTimedOut = false;
+      let isSettled = false;
 
       // Parse stdout as newline-delimited JSON
       const rl = createInterface({ input: proc.stdout });
@@ -283,7 +307,19 @@ export class ClaudeBridge extends EventEmitter {
 
       // Handle process exit
       proc.on('close', (code) => {
+        // Clean up readline interface
+        rl.close();
+        clearTimeout(timeout);
         this.activeProcess = null;
+
+        // Skip if already settled by timeout
+        if (isSettled) return;
+        isSettled = true;
+
+        if (isTimedOut) {
+          // Already rejected by timeout handler
+          return;
+        }
 
         if (code === 0) {
           // Use finalResult from result event, or fallback
@@ -310,7 +346,13 @@ export class ClaudeBridge extends EventEmitter {
       });
 
       proc.on('error', (error) => {
+        rl.close();
+        clearTimeout(timeout);
         this.activeProcess = null;
+
+        if (isSettled) return;
+        isSettled = true;
+
         const appError = new AppError(
           `Failed to spawn Claude Code: ${error.message}`,
           ErrorCode.CLAUDE_SPAWN_ERROR,
@@ -322,7 +364,9 @@ export class ClaudeBridge extends EventEmitter {
 
       // Timeout handling
       const timeout = setTimeout(() => {
-        if (proc.exitCode === null) {
+        if (proc.exitCode === null && !isSettled) {
+          isTimedOut = true;
+          isSettled = true;
           logger.warn({ sessionId: request.sessionId }, 'Claude request timeout, killing process');
           proc.kill('SIGTERM');
           reject(
@@ -334,8 +378,6 @@ export class ClaudeBridge extends EventEmitter {
           );
         }
       }, config.CLAUDE_TIMEOUT_MS);
-
-      proc.on('close', () => clearTimeout(timeout));
     });
   }
 

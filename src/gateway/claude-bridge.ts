@@ -133,6 +133,7 @@ export class ClaudeBridge extends EventEmitter {
       // Spawn Claude Code process
       const args = [
         '--print',
+        '--verbose',
         '--output-format', 'stream-json',
         '--resume', request.sessionId,
         '-p', request.message,

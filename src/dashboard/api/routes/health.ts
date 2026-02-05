@@ -1,8 +1,42 @@
 import { Hono } from 'hono';
 import { gateway, sessionStore, claudeBridge } from '../../../gateway';
+import { getBot } from '../../../telegram';
+import { testConnection, isSupabaseConfigured } from '../../../memory/supabase';
 import type { HealthStatus } from '../../../types';
 
 const health = new Hono();
+
+/**
+ * Ping Telegram bot to check if it's online
+ */
+async function pingTelegram(): Promise<{ status: 'online' | 'offline'; lastPing: Date }> {
+  const bot = getBot();
+  if (!bot) {
+    return { status: 'offline', lastPing: new Date() };
+  }
+
+  try {
+    await bot.api.getMe();
+    return { status: 'online', lastPing: new Date() };
+  } catch {
+    return { status: 'offline', lastPing: new Date() };
+  }
+}
+
+/**
+ * Check Supabase connection status
+ */
+async function checkSupabase(): Promise<{ status: 'connected' | 'disconnected'; latency: number }> {
+  if (!isSupabaseConfigured()) {
+    return { status: 'disconnected', latency: -1 };
+  }
+
+  const result = await testConnection();
+  return {
+    status: result.connected ? 'connected' : 'disconnected',
+    latency: result.latency,
+  };
+}
 
 /**
  * Format uptime in human readable format
@@ -24,22 +58,22 @@ health.get('/', async (c) => {
   const claudeStatus = claudeBridge.getStatus();
   const uptime = gateway.getUptime();
 
+  // Run health checks in parallel for better performance
+  const [telegramStatus, supabaseStatus] = await Promise.all([
+    pingTelegram(),
+    checkSupabase(),
+  ]);
+
   const healthStatus: HealthStatus = {
-    telegram: {
-      status: 'online', // TODO: Actually ping the bot
-      lastPing: new Date(),
-    },
-    supabase: {
-      status: 'disconnected', // TODO: Check actual connection
-      latency: -1,
-    },
+    telegram: telegramStatus,
+    supabase: supabaseStatus,
     claude: {
       status: claudeStatus.status,
       activeSession: claudeStatus.activeSession,
       queueLength: claudeStatus.queueLength,
     },
     uptime,
-    todayCost: 0, // TODO: Calculate from logs
+    todayCost: claudeBridge.getTodayCost(),
   };
 
   if (detailed) {

@@ -6,6 +6,7 @@ import { createChildLogger } from '../../utils/logger';
 import { AppError, ErrorCode } from '../../utils/errors';
 import { dashboardAuth } from './middleware/auth';
 import healthRoutes from './routes/health';
+import goalsRoutes from './routes/goals';
 
 const logger = createChildLogger('api-server');
 
@@ -65,6 +66,9 @@ app.route('/api/health', healthRoutes);
 // Protected routes (require auth)
 const protectedRoutes = new Hono();
 protectedRoutes.use('*', dashboardAuth);
+
+// Goals CRUD endpoints
+protectedRoutes.route('/goals', goalsRoutes);
 
 // Stats endpoint
 protectedRoutes.get('/stats', async (c) => {

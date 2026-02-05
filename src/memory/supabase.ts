@@ -29,7 +29,15 @@ export interface DbGoal {
   completed_at: string | null;
 }
 
-export interface MemorySearchResult extends DbMemory {
+// 搜尋結果型別 - 注意：SQL 函數不返回 embedding, updated_at, expires_at
+export interface MemorySearchResult {
+  id: string;
+  content: string;
+  memory_type: DbMemory['memory_type'];
+  importance: number;
+  metadata: Record<string, unknown>;
+  tags: string[];
+  created_at: string;
   similarity: number;
 }
 

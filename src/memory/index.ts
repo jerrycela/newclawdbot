@@ -1,5 +1,6 @@
 import { getSupabase, isSupabaseConfigured, testConnection, disposeSupabase } from './supabase';
-import type { DbMemory, DbGoal, MemorySearchResult } from './supabase';
+import type { DbMemory, DbGoal } from './supabase';
+import type { MemorySearchResult } from './supabase';
 import { generateEmbedding, isOpenAIConfigured, clearEmbeddingCache } from './embeddings';
 import { searchMemories, getRelevantContext, type SearchOptions } from './search';
 import { createChildLogger } from '../utils/logger';
@@ -215,7 +216,7 @@ export class MemoryService {
     this.ensureInitialized();
 
     const results = await searchMemories(query, options);
-    return results.map((r) => this.dbToMemory(r));
+    return results.map((r) => this.searchResultToMemory(r));
   }
 
   /**
@@ -404,6 +405,25 @@ export class MemoryService {
       createdAt: new Date(db.created_at),
       updatedAt: db.updated_at ? new Date(db.updated_at) : undefined,
       expiresAt: db.expires_at ? new Date(db.expires_at) : undefined,
+    };
+  }
+
+  /**
+   * Convert search result to Memory (搜尋結果不包含完整欄位)
+   */
+  private searchResultToMemory(result: MemorySearchResult): Memory {
+    return {
+      id: result.id,
+      content: result.content,
+      memoryType: result.memory_type,
+      importance: result.importance,
+      metadata: result.metadata,
+      tags: result.tags,
+      createdAt: new Date(result.created_at),
+      // 搜尋結果不包含這些欄位
+      updatedAt: undefined,
+      expiresAt: undefined,
+      embedding: undefined,
     };
   }
 

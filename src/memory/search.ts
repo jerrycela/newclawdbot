@@ -13,13 +13,14 @@ export interface SearchOptions {
   minImportance?: number; // Minimum importance score
 }
 
-const DEFAULT_OPTIONS: Required<SearchOptions> = {
+// 預設搜尋選項 - memoryType 為 undefined 表示不過濾
+const DEFAULT_OPTIONS = {
   threshold: 0.7,
   limit: 10,
-  memoryType: undefined as unknown as MemoryType,
+  memoryType: undefined as MemoryType | undefined,
   includeExpired: false,
   minImportance: 1,
-};
+} as const satisfies SearchOptions;
 
 /**
  * Search memories by semantic similarity using pgvector

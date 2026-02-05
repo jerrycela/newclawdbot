@@ -240,41 +240,245 @@ const tools = {
 
 ---
 
+### 7. 可觀測性儀表板 (Dashboard) ✅ 可行
+
+| 項目 | 評估 |
+|------|------|
+| 技術成熟度 | 成熟 |
+| 難度 | 中 |
+| 所需時間 | 1-2 週 |
+
+**Dashboard 功能模組：**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  TELEGRAM BOT  │  SUPABASE    │  UPTIME     │  TODAY'S COST               │
+│  ● Online      │  ● Connected │  25h 13m    │  $2.34                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────┬───────────────────────────────────┐
+│  ◎ ACTIVE GOALS                    [3] │  ⊕ MEMORY                         │
+│  ┌────────────────────────────────────┐ │     2 FACTS                       │
+│  │ Create video after research       │ │                                   │
+│  │ No deadline              [ACTIVE] │ │  🔧 TOP TOOLS (24H)               │
+│  │                                   │ │     gmail_search: 45              │
+│  │ Film 2 Claude Code videos         │ │     calendar_read: 23             │
+│  │ No deadline              [ACTIVE] │ │                                   │
+│  │                                   │ │  ✨ SKILLS USED (24H)             │
+│  │ Film comparison videos            │ │     /check-email: 12              │
+│  │ Overdue by 2 days        [ACTIVE] │ │     /summarize: 8                 │
+│  └────────────────────────────────────┘ │                                   │
+├─────────────────────────────────────────┴───────────────────────────────────┤
+│  📡 LIVE FEED                                                        [Live] │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │ 12:17:48 [READ]   Read /services/dashboard/stream-server.ts           │ │
+│  │ 12:17:41 [TOOL]   UserPromptSubmit                                    │ │
+│  │ 12:17:07 [SEARCH] mcp__gmail-business__gmail_search newer_than:1d     │ │
+│  │ 12:17:06 [SEARCH] mcp__gmail-business__gmail_search newer_than:1d     │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**技術方案：**
+- **前端框架**：Next.js + React + Tailwind CSS
+- **即時通訊**：WebSocket (Socket.io 或原生 WS)
+- **狀態管理**：Zustand 或 React Query
+- **圖表**：Recharts 或 Chart.js
+
+**Live Feed 實作架構：**
+
+```typescript
+// Stream Server - 攔截 Claude Code 輸出
+import { WebSocketServer } from "ws";
+import { spawn } from "child_process";
+
+const wss = new WebSocketServer({ port: 8080 });
+
+// Claude Code 以 JSON streaming 模式運行
+const claude = spawn("claude", ["--output-format", "stream-json"], {
+  stdio: ["pipe", "pipe", "pipe"]
+});
+
+claude.stdout.on("data", (data) => {
+  const events = parseStreamEvents(data);
+  events.forEach(event => {
+    // 廣播給所有連接的 Dashboard
+    wss.clients.forEach(client => {
+      client.send(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        type: event.type,       // 'tool_use', 'read', 'write', 'search'
+        tool: event.tool_name,
+        content: event.content
+      }));
+    });
+
+    // 同時寫入資料庫用於統計
+    saveToDatabase(event);
+  });
+});
+```
+
+**狀態監控實作：**
+
+```typescript
+// Health Check Service
+async function checkSystemHealth() {
+  return {
+    telegram: await checkTelegramBot(),      // ping bot API
+    supabase: await checkSupabaseConnection(), // query test
+    uptime: process.uptime(),
+    todayCost: await calculateTodayCost(),   // 從日誌計算
+  };
+}
+
+// API Endpoint
+app.get("/api/health", async (c) => {
+  const health = await checkSystemHealth();
+  return c.json(health);
+});
+```
+
+**資料庫 Schema 擴充：**
+
+```sql
+-- 工具使用日誌（用於統計）
+CREATE TABLE tool_usage_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tool_name VARCHAR(100) NOT NULL,
+  tool_type VARCHAR(50),  -- 'read', 'write', 'search', 'mcp'
+  input_summary TEXT,
+  execution_time_ms INTEGER,
+  success BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 目標追蹤（Active Goals）
+CREATE TABLE goals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT,
+  status VARCHAR(20) DEFAULT 'active', -- 'active', 'completed', 'paused'
+  deadline TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+
+-- 建立索引優化查詢
+CREATE INDEX idx_tool_usage_created ON tool_usage_logs(created_at DESC);
+CREATE INDEX idx_tool_usage_name ON tool_usage_logs(tool_name);
+```
+
+**前端組件結構：**
+
+```
+dashboard/
+├── app/
+│   ├── page.tsx              # 主頁面
+│   └── api/
+│       ├── health/route.ts   # 健康狀態 API
+│       ├── goals/route.ts    # 目標 CRUD
+│       └── stats/route.ts    # 統計數據
+├── components/
+│   ├── StatusBar.tsx         # 頂部狀態列
+│   ├── ActiveGoals.tsx       # 目標面板
+│   ├── LiveFeed.tsx          # 即時串流
+│   ├── MemoryStats.tsx       # 記憶統計
+│   └── ToolUsageChart.tsx    # 工具使用圖表
+├── hooks/
+│   ├── useWebSocket.ts       # WebSocket 連線
+│   └── useHealth.ts          # 健康狀態輪詢
+└── lib/
+    └── supabase.ts           # Supabase 客戶端
+```
+
+**風險：** 低。這是標準的 Web 開發工作，主要挑戰在於即時串流的效能優化。
+
+---
+
 ## 二、整體架構建議
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        使用者介面層                              │
-├──────────────────┬──────────────────┬───────────────────────────┤
-│   Telegram Bot   │   語音通話系統    │    監控儀表板 (Web)        │
-│    (Grammy)      │  (Twilio+11Labs) │      (Next.js)            │
-└────────┬─────────┴────────┬─────────┴─────────────┬─────────────┘
-         │                  │                       │
-         ▼                  ▼                       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Relay / 訊息路由層                          │
-│                        (Bun + Hono)                             │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Claude Code (Headless)                      │
-│                      AI 核心處理引擎                             │
-├─────────────────────────────────────────────────────────────────┤
-│  MCP Servers:                                                   │
-│  ├── Google Suite (Gmail, Calendar, Drive)                      │
-│  ├── Memory System (Supabase)                                   │
-│  ├── System Tools (Terminal, File System)                       │
-│  └── Communication (Telegram, Twilio)                           │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       資料持久層                                 │
-├──────────────────┬──────────────────┬───────────────────────────┤
-│    Supabase      │   本地檔案系統    │     Google Drive          │
-│  (記憶 + 日誌)    │                  │                           │
-└──────────────────┴──────────────────┴───────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                              使用者介面層                                      │
+├───────────────────┬───────────────────┬───────────────────────────────────────┤
+│   Telegram Bot    │   語音通話系統     │         監控儀表板 (Web)               │
+│    (Grammy)       │  (Twilio+11Labs)  │           (Next.js)                   │
+│                   │                   │  ┌─────────────────────────────────┐  │
+│  • 文字訊息        │  • 來電處理        │  │ Status: Bot●  DB●  Uptime      │  │
+│  • 語音訊息        │  • 去電功能        │  │ Active Goals | Memory | Tools  │  │
+│  • 檔案傳送        │  • 通話後處理      │  │ ═══════════════════════════════│  │
+│                   │                   │  │ 📡 LIVE FEED (WebSocket)       │  │
+│                   │                   │  │ [READ] file.ts                 │  │
+│                   │                   │  │ [TOOL] gmail_search            │  │
+│                   │                   │  └─────────────────────────────────┘  │
+└─────────┬─────────┴─────────┬─────────┴───────────────────┬───────────────────┘
+          │                   │                             │
+          ▼                   ▼                             ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                          Relay / 訊息路由層                                    │
+│                            (Bun + Hono)                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │  • 訊息佇列管理    • WebSocket Server    • Event Broadcasting           │  │
+│  │  • API Gateway     • 健康檢查端點        • 認證與授權                    │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────┬───────────────────────────────────────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+                    ▼               ▼               ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                       Claude Code (Headless Mode)                             │
+│                          AI 核心處理引擎                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │  --output-format stream-json  →  即時事件串流到 Dashboard                │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+├───────────────────────────────────────────────────────────────────────────────┤
+│  MCP Servers:                                                                 │
+│  ├── 📧 Google Suite (Gmail, Calendar, Drive)                                 │
+│  ├── 🧠 Memory System (Supabase) ──→ 記憶存取 + 統計查詢                       │
+│  ├── 💻 System Tools (Terminal, File System)                                  │
+│  ├── 📱 Communication (Telegram API, Twilio API)                              │
+│  └── 📊 Analytics (工具使用日誌、技能追蹤)                                     │
+└───────────────────────────────────┬───────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                             資料持久層                                         │
+├─────────────────────┬─────────────────────┬───────────────────────────────────┤
+│      Supabase       │     本地檔案系統     │         Google Drive              │
+│   (PostgreSQL)      │                     │                                   │
+│  ┌───────────────┐  │                     │                                   │
+│  │ memories      │  │  • 工作目錄          │  • 文件儲存                        │
+│  │ conversation  │  │  • 暫存檔案          │  • 備份                           │
+│  │ goals         │  │  • 設定檔            │                                   │
+│  │ tool_logs     │←─┼──統計數據來源────────┼→ Dashboard                        │
+│  └───────────────┘  │                     │                                   │
+└─────────────────────┴─────────────────────┴───────────────────────────────────┘
+```
+
+### Dashboard 數據流
+
+```
+Claude Code (stream-json)
+        │
+        ▼ stdout 事件
+┌─────────────────────┐
+│   Stream Parser     │ ← 解析 JSON 事件
+└─────────┬───────────┘
+          │
+    ┌─────┴─────┐
+    ▼           ▼
+┌───────┐  ┌─────────┐
+│ WS    │  │ Supabase│
+│Server │  │ (logs)  │
+└───┬───┘  └─────────┘
+    │           │
+    ▼           ▼
+┌─────────────────────┐
+│     Dashboard       │
+│  • Live Feed (WS)   │
+│  • Stats (Query)    │
+│  • Health (API)     │
+└─────────────────────┘
 ```
 
 ---
@@ -343,7 +547,14 @@ const tools = {
 - [ ] 監控儀表板
 - [ ] 日誌與審計
 
-**預估總開發時間：6-9 週（全職開發）**
+### Phase 7: 可觀測性儀表板 (1-2 週)
+- [ ] 即時狀態監控 (Telegram, Supabase, Uptime)
+- [ ] Active Goals 目標追蹤面板
+- [ ] Claude Code Live Feed 即時串流
+- [ ] Memory 統計顯示
+- [ ] 工具與技能使用統計 (24H)
+
+**預估總開發時間：7-11 週（全職開發）**
 
 ---
 

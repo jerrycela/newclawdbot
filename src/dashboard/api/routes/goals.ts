@@ -13,6 +13,19 @@ function isValidStatus(status: string): status is GoalStatus {
   return ['active', 'completed', 'paused'].includes(status);
 }
 
+// Validate and parse date string
+function parseDate(dateStr: string): Date {
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) {
+    throw new AppError(
+      'Invalid date format. Use ISO 8601 format (e.g., 2024-12-31T23:59:59Z)',
+      ErrorCode.VALIDATION_ERROR,
+      400
+    );
+  }
+  return date;
+}
+
 /**
  * GET /api/goals - List all goals
  * Query params:
@@ -77,7 +90,7 @@ goals.post('/', async (c) => {
     title: body.title.trim(),
     description: body.description,
     priority: body.priority,
-    deadline: body.deadline ? new Date(body.deadline) : undefined,
+    deadline: body.deadline ? parseDate(body.deadline) : undefined,
   });
 
   logger.info({ goalId: goal.id, title: goal.title }, 'Goal created via API');
@@ -127,7 +140,7 @@ goals.put('/:id', async (c) => {
     description: body.description,
     status: body.status as GoalStatus | undefined,
     priority: body.priority,
-    deadline: body.deadline === null ? null : body.deadline ? new Date(body.deadline) : undefined,
+    deadline: body.deadline === null ? null : body.deadline ? parseDate(body.deadline) : undefined,
   });
 
   logger.info({ goalId: id }, 'Goal updated via API');

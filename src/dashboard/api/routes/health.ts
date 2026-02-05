@@ -6,6 +6,19 @@ import type { HealthStatus } from '../../../types';
 
 const health = new Hono();
 
+// Health check timeout in milliseconds
+const HEALTH_CHECK_TIMEOUT = 5000;
+
+/**
+ * Wrap a promise with a timeout
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+  ]);
+}
+
 /**
  * Ping Telegram bot to check if it's online
  */
@@ -16,7 +29,11 @@ async function pingTelegram(): Promise<{ status: 'online' | 'offline'; lastPing:
   }
 
   try {
-    await bot.api.getMe();
+    await withTimeout(
+      bot.api.getMe(),
+      HEALTH_CHECK_TIMEOUT,
+      null // Timeout will make this null, triggering offline status
+    );
     return { status: 'online', lastPing: new Date() };
   } catch {
     return { status: 'offline', lastPing: new Date() };
@@ -31,7 +48,12 @@ async function checkSupabase(): Promise<{ status: 'connected' | 'disconnected'; 
     return { status: 'disconnected', latency: -1 };
   }
 
-  const result = await testConnection();
+  const result = await withTimeout(
+    testConnection(),
+    HEALTH_CHECK_TIMEOUT,
+    { connected: false, latency: -1 }
+  );
+
   return {
     status: result.connected ? 'connected' : 'disconnected',
     latency: result.latency,
